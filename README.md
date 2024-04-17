@@ -8,15 +8,15 @@ I'll <do xyz>
 ```
 git submodule init
 git submodule update
-docker build -t ot/<image-name>:0.1 .
+docker build -t ot/push_artifact:0.1 .
 ```
 
 * Do local testing
 ```
-docker run -it --rm -v $PWD:/src -e var1="key1" -e var2="key2" ot/<image-name>:0.1
+docker run -it --rm -v $PWD:/src -e WORKSPACE=/src -e BUILD_NUMBER="" -e BUILD_COMPONENT_NAME="BUILD_COMPONENT_NAME" -e ARTIFACT="" -e USERNAME="" -e PASSWORD="" -e NEXUS_URL="" ot/push_artifact:0.1
 ```
 
 * Debug
 ```
-docker run -it --rm -v $PWD:/src -e var1="key1" -e var2="key2" --entrypoint sh ot/<image-name>:0.1
+docker run -it --rm -v $PWD:/src -e WORKSPACE=/src -e BUILD_NUMBER="" -e BUILD_COMPONENT_NAME="BUILD_COMPONENT_NAME" -e ARTIFACT="" -e USERNAME="" -e PASSWORD="" -e NEXUS_URL="" --entrypoint sh ot/push_artifact:0.1
 ```
