@@ -17,7 +17,7 @@ cd "$CODEBASE_LOCATION"
 zip -qr "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "$ARTIFACT" 
 
 # Upload the artifact to Nexus
-curl -v -u "${USERNAME}:${PASSWORD}" --upload-file "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "${NEXUS_URL}/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}" 2> /dev/null
+curl -v -u "${USERNAME}:${PASSWORD}" --upload-file "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "${NEXUS_URL}/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" 2> /dev/null
 
 # Check if artifact upload was successful
 if [ $? -eq 0 ]; then
