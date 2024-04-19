@@ -1,5 +1,5 @@
 # BP-SHELL-STEP-TEMPLATE
-I'll <do xyz>
+I'll create the zip of the artifact with the `service_name-build_no.zip`  and push the artifact to the provided nexus repository with curl command and after that I'll delete the the zip created from local.
 
 ## Setup
 * Clone the code available at [BP-SHELL-STEP-TEMPLATE](https://github.com/OT-BUILDPIPER-MARKETPLACE/BP-SHELL-STEP-TEMPLATE)
