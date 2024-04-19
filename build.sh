@@ -14,7 +14,17 @@ sleep  $SLEEP_DURATION
 cd "$CODEBASE_LOCATION"
 
 # Zip the artifact
-zip -qr "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "$ARTIFACT" 
+zip -qjr "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "$ARTIFACT" 
+
+# Check if artifact Zip creation was successful
+if [ $? -eq 0 ]; then
+    TASK_STATUS=0
+    logInfoMessage "Created ${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip containing $ARTIFACT"
+else
+    TASK_STATUS=1
+    logErrorMessage "Failed to create the Zip"
+    exit 1
+fi
 
 # Upload the artifact to Nexus
 curl -v -u "${USERNAME}:${PASSWORD}" --upload-file "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "${NEXUS_URL}/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" 2> /dev/null
@@ -22,7 +32,7 @@ curl -v -u "${USERNAME}:${PASSWORD}" --upload-file "${BUILD_COMPONENT_NAME}-${BU
 # Check if artifact upload was successful
 if [ $? -eq 0 ]; then
     TASK_STATUS=0
-    logInfoMessage "Artifact pushed successfully"
+    logInfoMessage "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip pushed successfully to ${NEXUS_URL}/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip "
 else
     TASK_STATUS=1
     logErrorMessage "Failed to push the artifact"
@@ -32,6 +42,15 @@ fi
 # Remove the generated zip file
 rm -f "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip"
 
+# Check the status of zip on local
+if [ $? -eq 0 ]; then
+    TASK_STATUS=0
+    logInfoMessage "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip removed from local successfully"
+else
+    TASK_STATUS=1
+    logErrorMessage "Failed to remove ${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip from local"
+    exit 1
+fi
 
 # Save task status
 saveTaskStatus "$TASK_STATUS" "$ACTIVITY_SUB_TASK_CODE"
