@@ -1,6 +1,6 @@
 # Changelog for registry.buildpiper.in/nexus-push-artifact
 
-## [0.1.0] - 2025-06-22
+## [0.1.1] - 2025-06-22
 
 ### Added
 - Initial release of Nexus Push Artifact Docker image.
