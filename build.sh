@@ -1,9 +1,6 @@
 #!/bin/bash
 source /opt/buildpiper/shell-functions/functions.sh
 source /opt/buildpiper/shell-functions/log-functions.sh
-source /opt/buildpiper/shell-functions/str-functions.sh
-source /opt/buildpiper/shell-functions/file-functions.sh
-source /opt/buildpiper/shell-functions/aws-functions.sh
 
 TASK_STATUS=0
 CODEBASE_LOCATION="${WORKSPACE}"/"${CODEBASE_DIR}"
@@ -12,6 +9,21 @@ sleep  $SLEEP_DURATION
 
 # Change directory to the codebase location
 cd "$CODEBASE_LOCATION"
+
+# List all required variables
+REQUIRED_VARS=(NEXUS_URL REPO_NAME USERNAME PASSWORD ARTIFACT BUILD_COMPONENT_NAME BUILD_NUMBER)
+MISSING_VARS=()
+
+for var in "${REQUIRED_VARS[@]}"; do
+  if [[ -z "${!var}" ]]; then
+    MISSING_VARS+=("$var")
+  fi
+done
+
+if (( ${#MISSING_VARS[@]} )); then
+  echo "❌ Error: Required variables are not set: ${MISSING_VARS[*]}"
+  exit 1
+fi
 
 # Zip the artifact
 zip -qjr "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "$ARTIFACT" 
@@ -27,12 +39,12 @@ else
 fi
 
 # Upload the artifact to Nexus
-curl -v -u "${USERNAME}:${PASSWORD}" --upload-file "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "${NEXUS_URL}/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" 2> /dev/null
+curl -v -u "${USERNAME}:${PASSWORD}" --upload-file "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "${NEXUS_URL}/repository/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" 2> /dev/null
 
 # Check if artifact upload was successful
 if [ $? -eq 0 ]; then
     TASK_STATUS=0
-    logInfoMessage "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip pushed successfully to ${NEXUS_URL}/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip "
+    logInfoMessage "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip pushed successfully to ${NEXUS_URL}/repository/${REPO_NAME}/${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip "
 else
     TASK_STATUS=1
     logErrorMessage "Failed to push the artifact"

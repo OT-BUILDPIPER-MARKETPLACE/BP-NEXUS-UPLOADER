@@ -1,22 +1,29 @@
-FROM alpine
-RUN apk add --no-cache --upgrade bash
-RUN apk add jq
-RUN apk add curl
-RUN apk add zip
-COPY build.sh .
+# check=skip=SecretsUsedInArgOrEnv
+FROM alpine:latest
 
+RUN apk add --no-cache --upgrade \
+  bash \
+  jq \
+  openssh \
+  curl \
+  coreutils
+
+ENV TZ=Asia/Kolkata
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+COPY build.sh .
 ADD BP-BASE-SHELL-STEPS /opt/buildpiper/shell-functions/
 
-ENV BUILD_NUMBER ""
-ENV BUILD_COMPONENT_NAME ""
-ENV ARTIFACT ""
-ENV USERNAME ""
-ENV PASSWORD ""
-ENV NEXUS_URL ""
-ENV REPO_NAME ""
+ENV ARTIFACT=""
+ENV USERNAME=""
+ENV PASSWORD=""
+ENV NEXUS_URL=""
+ENV REPO_NAME=""
 
-ENV SLEEP_DURATION 5s
-ENV ACTIVITY_SUB_TASK_CODE NEXUS_UPLOADER
-ENV VALIDATION_FAILURE_ACTION WARNING
+ENV SLEEP_DURATION=5s
+ENV ACTIVITY_SUB_TASK_CODE=NEXUS_UPLOADER
+ENV VALIDATION_FAILURE_ACTION=WARNING
+
+RUN chmod +x *.sh && chmod -R +x /opt/buildpiper/shell-functions/
 
 ENTRYPOINT [ "./build.sh" ]
