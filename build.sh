@@ -10,6 +10,11 @@ sleep  $SLEEP_DURATION
 # Change directory to the codebase location
 cd "$CODEBASE_LOCATION"
 
+# Set BUILD_COMPONENT_NAME and BUILD_NUMBER with fallback values
+BUILD_COMPONENT_NAME="${BUILD_COMPONENT_NAME:-$CODEBASE_DIR}"
+BUILD_NUMBER="${BUILD_NUMBER:-$JOB_NUMBER}"
+
+
 # List all required variables
 REQUIRED_VARS=(NEXUS_URL REPO_NAME USERNAME PASSWORD ARTIFACT BUILD_COMPONENT_NAME BUILD_NUMBER)
 MISSING_VARS=()
@@ -25,8 +30,27 @@ if (( ${#MISSING_VARS[@]} )); then
   exit 1
 fi
 
-# Zip the artifact
-zip -qjr "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" "$ARTIFACT" 
+ls -ltr
+
+# Check if artifact(s) exist before zipping
+if compgen -G "$ARTIFACT" > /dev/null; then
+    logInfoMessage "Executing zip command to create zip -qjr ${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip $ARTIFACT"
+    zip -qjr "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip" $ARTIFACT
+    ZIP_STATUS=$?
+else
+    logErrorMessage "No files found matching artifact pattern: $ARTIFACT"
+    exit 1
+fi
+
+# Check if artifact Zip creation was successful
+if [ $ZIP_STATUS -eq 0 ]; then
+    TASK_STATUS=0
+    logInfoMessage "Created ${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip containing $ARTIFACT"
+else
+    TASK_STATUS=1
+    logErrorMessage "Failed to create the Zip"
+    exit 1
+fi
 
 # Check if artifact Zip creation was successful
 if [ $? -eq 0 ]; then

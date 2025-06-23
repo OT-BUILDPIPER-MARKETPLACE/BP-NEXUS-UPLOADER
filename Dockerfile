@@ -6,6 +6,7 @@ RUN apk add --no-cache --upgrade \
   jq \
   openssh \
   curl \
+  zip \
   coreutils
 
 ENV TZ=Asia/Kolkata
