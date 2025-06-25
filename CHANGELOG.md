@@ -1,4 +1,10 @@
-# Changelog
+# Changelog for registry.buildpiper.in/nexus-push-artifact
+
+## [0.1.3] - 2025-06-26
+
+### Added
+- Introduced `generateOutputVariable` function to generate and store output variables as JSON files for pipeline integration.
+- The script now calls `generateOutputVariable` after artifact processing to record the artifact file name.
 
 ## [0.1.2] - 2025-06-23
 

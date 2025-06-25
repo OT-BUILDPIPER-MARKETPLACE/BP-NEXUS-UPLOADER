@@ -14,7 +14,6 @@ cd "$CODEBASE_LOCATION"
 BUILD_COMPONENT_NAME="${BUILD_COMPONENT_NAME:-$CODEBASE_DIR}"
 BUILD_NUMBER="${BUILD_NUMBER:-$JOB_NUMBER}"
 
-
 # List all required variables
 REQUIRED_VARS=(NEXUS_URL REPO_NAME USERNAME PASSWORD ARTIFACT BUILD_COMPONENT_NAME BUILD_NUMBER)
 MISSING_VARS=()
@@ -88,5 +87,26 @@ else
     exit 1
 fi
 
+# TASK_STATUS=$?
+
+generateOutputVariable() {
+    ACTIVITY_SUB_TASK_CODE="$1"
+    output_var_key="$2"
+    output_var_value="$3"
+
+    EXECUTION_DIR="/bp/execution_dir"
+    OUTPUT_DIR="${EXECUTION_DIR}/${EXECUTION_TASK_ID}"
+    file_name="$OUTPUT_DIR/summary.json"
+
+    mkdir -p "$OUTPUT_DIR"
+
+    if [[ -n "$output_var_key" && -n "$output_var_value" ]]; then
+        echo "{ \"output_vars\": { \"$output_var_key\": \"$output_var_value\" } }" | jq "." > "${OUTPUT_DIR}/${ACTIVITY_SUB_TASK_CODE}_output.json"
+    fi
+    echo "Output Variable stored in: $file_name"
+}
+
+generateOutputVariable "$ACTIVITY_SUB_TASK_CODE" "ARTIFACT_FILE" "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip"
+
 # Save task status
-saveTaskStatus "$TASK_STATUS" "$ACTIVITY_SUB_TASK_CODE"
+saveTaskStatus "$TASK_STATUS" "$ACTIVITY_SUB_TASK_CODE" "ARTIFACT_FILE" "${BUILD_COMPONENT_NAME}-${BUILD_NUMBER}.zip"
