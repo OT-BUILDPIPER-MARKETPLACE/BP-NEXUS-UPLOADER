@@ -21,4 +21,4 @@ else
     logErrorMessage "Target server not provided please check"
 
 fi
-saveTaskStatus ${TASK_STATUS} ${ACTIVITY_SUB_TASK_CODE}
+saveTaskStatus ${TASK_STATUS} ${ACTIVITY_SUB_TASK_CODE} h
