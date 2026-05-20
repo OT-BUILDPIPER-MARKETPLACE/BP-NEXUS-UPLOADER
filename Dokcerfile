@@ -1,13 +1,24 @@
-FROM alpine
-RUN apk add --no-cache --upgrade bash
-RUN apk add jq
-COPY build.sh .
+FROM ubuntu:22.04
 
-ADD BP-BASE-SHELL-STEPS /opt/buildpiper/shell-functions/
+RUN apt-get update && apt-get install -y \
+    curl \
+    libxml2-utils \
+    coreutils \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
 
+RUN groupadd -g 65522 buildpiper && \
+    useradd -u 65522 -g buildpiper -m -s /bin/bash buildpiper
 
-ENV SLEEP_DURATION 5s
-ENV ACTIVITY_SUB_TASK_CODE REPLACE_IT
-ENV VALIDATION_FAILURE_ACTION WARNING
+RUN mkdir -p /opt/buildpiper/shell-functions
 
-ENTRYPOINT [ "./build.sh" ]
+COPY BP-BASE-SHELL-STEPS /opt/buildpiper/shell-functions/
+COPY build.sh /opt/buildpiper/build.sh
+
+RUN chown -R buildpiper:buildpiper /opt/buildpiper && \
+    chmod +x /opt/buildpiper/build.sh
+
+USER buildpiper
+WORKDIR /opt/buildpiper
+
+ENTRYPOINT ["./build.sh"]
