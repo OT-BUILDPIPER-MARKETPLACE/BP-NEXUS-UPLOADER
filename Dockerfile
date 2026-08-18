@@ -6,7 +6,8 @@ RUN apk add --no-cache \
     ca-certificates \
     python3 \
     py3-pip \
-    libxml2-utils && \
+    libxml2-utils \
+    jq && \
     update-ca-certificates
 
 RUN python3 -m pip install \
@@ -17,7 +18,8 @@ RUN python3 -m pip install \
 RUN python3 --version && \
     python3 -m pip --version && \
     xmllint --version && \
-    twine --version
+    twine --version && \
+    jq --version
 
 # -------------------------------------------------------
 # Create non-root user (UID/GID 65522)

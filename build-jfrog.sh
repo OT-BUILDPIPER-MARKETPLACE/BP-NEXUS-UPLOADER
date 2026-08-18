@@ -156,7 +156,6 @@ logInfoMessage "Repository URL : $BASE_URL"
 
 upload_file "$JAR_FILE_SOURCE"               "$BASE_URL/$JAR_NAME"
 
-
 upload_file "$POM_FILE"                      "$BASE_URL/$POM_NAME"
 
 ###############################################################################
