@@ -1,171 +1,317 @@
 #!/bin/bash
-set -euo pipefail
+
 source /opt/buildpiper/shell-functions/log-functions.sh
 source /opt/buildpiper/shell-functions/functions.sh
 
-# ==============================
-# 🔹 CONFIGURATION
-# ==============================
-NEXUS_URL="${NEXUS_URL:-http://your-nexus-url}"
-REPO_NAME="${REPO_NAME:-your-repo-name}"
-USERNAME="${USERNAME:-admin}"
-PASSWORD="${PASSWORD:-admin123}"
+: "${ACTIVITY_SUB_TASK_CODE:?ERROR: ACTIVITY_SUB_TASK_CODE is not set}"
 
-
-
-CODEBASE_LOCATION="${WORKSPACE}/${CODEBASE_DIR}"
-logInfoMessage "Processing at [$CODEBASE_LOCATION]"
-cd "$CODEBASE_LOCATION"
-
-# ==============================
-# 🔹 CHECK xmllint
-# ==============================
-command -v xmllint >/dev/null 2>&1 || {
-  logInfoMessage "xmllint is required but not installed"
-  exit 1
-}
-
-# ==============================
-# 🔹 UPLOAD FUNCTION
-# ==============================
-upload_file() {
-  local FILE_PATH=$1
-  local DEST_URL=$2
-
-  logInfoMessage "Uploading $(basename "$FILE_PATH") → $DEST_URL"
-  TMP_FILE=$(mktemp)
-
-  HTTP_STATUS=$(curl -k \
-    -u "${USERNAME}:${PASSWORD}" \
-    --upload-file "$FILE_PATH" \
-    "$DEST_URL" \
-    -sS -o "$TMP_FILE" \
-    -w "%{http_code}") || {
-      logInfoMessage "Curl failed for $(basename "$FILE_PATH")"
-      rm -f "$TMP_FILE"
-      return 1
-    }
-
-  BODY=$(cat "$TMP_FILE")
-  rm -f "$TMP_FILE"
-
-  if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
-    logInfoMessage "Upload failed for $(basename "$FILE_PATH") (HTTP $HTTP_STATUS)"
-    logInfoMessage "$BODY"
-    return 1
-  fi
-
-  logInfoMessage "✅ Uploaded $(basename "$FILE_PATH") successfully (HTTP $HTTP_STATUS)"
-}
-
-# ==============================
-# 🔹 PROCESS ONE MODULE
-# ==============================
-process_module() {
-  local POM_FILE=$1
-  local MODULE_DIR
-  MODULE_DIR=$(dirname "$POM_FILE")
-  local MODULE_NAME
-  MODULE_NAME=$(basename "$MODULE_DIR")
-
-  logInfoMessage "================================================"
-  logInfoMessage "🔹 Processing module: $MODULE_NAME"
-  logInfoMessage "================================================"
-
-  # --- Read artifactId ---
-  ARTIFACT=$(xmllint --xpath "string(/*[local-name()='project']/*[local-name()='artifactId'])" "$POM_FILE" 2>/dev/null)
-
-  # --- Read version (own → parent fallback) ---
-  VERSION=$(xmllint --xpath "string(/*[local-name()='project']/*[local-name()='version'])" "$POM_FILE" 2>/dev/null)
-  [[ -z "$VERSION" ]] && VERSION=$(xmllint --xpath "string(/*[local-name()='project']/*[local-name()='parent']/*[local-name()='version'])" "$POM_FILE" 2>/dev/null)
-
-  # --- Read groupId (own first, then parent fallback) ---
-  GROUP_ID=$(xmllint --xpath "string(/*[local-name()='project']/*[local-name()='groupId'])" "$POM_FILE" 2>/dev/null)
-  [[ -z "$GROUP_ID" ]] && GROUP_ID=$(xmllint --xpath "string(/*[local-name()='project']/*[local-name()='parent']/*[local-name()='groupId'])" "$POM_FILE" 2>/dev/null)
-
-  # --- Validation ---
-  if [[ -z "$ARTIFACT" || -z "$VERSION" || -z "$GROUP_ID" ]]; then
-    logInfoMessage "Skipping $MODULE_NAME — could not read artifact/version/groupId from pom.xml"
-    return 0
-  fi
-
-  GROUP_ID_PATH=$(echo "$GROUP_ID" | tr '.' '/')
-  UPLOAD_VERSION="${VERSION}"
-  POM_NAME="${ARTIFACT}-${UPLOAD_VERSION}.pom"
-  BASE_URL="${NEXUS_URL}/repository/${REPO_NAME}/${GROUP_ID_PATH}/${ARTIFACT}/${UPLOAD_VERSION}"
-
-  logInfoMessage "Artifact  : $ARTIFACT"
-  logInfoMessage "GroupId   : $GROUP_ID"
-  logInfoMessage "Version   : $UPLOAD_VERSION"
-  logInfoMessage "Base URL  : $BASE_URL"
-
-  # --- Try to find JAR in target/ ---
-  JAR_FILE_SOURCE="${MODULE_DIR}/target/${ARTIFACT}-${VERSION}.jar"
-
-  # --- Generate POM checksums ---
-  logInfoMessage "Generating POM checksums..."
-  md5sum  "$POM_FILE" | awk '{print $1}' > "${POM_FILE}.md5"
-  sha1sum "$POM_FILE" | awk '{print $1}' > "${POM_FILE}.sha1"
-
-  # --- Always upload POM (needed for dependency resolution) ---
-  upload_file "$POM_FILE"        "$BASE_URL/${POM_NAME}"      || return 1
-  upload_file "${POM_FILE}.md5"  "$BASE_URL/${POM_NAME}.md5"  || return 1
-  upload_file "${POM_FILE}.sha1" "$BASE_URL/${POM_NAME}.sha1" || return 1
-
-  # --- Upload JAR only if it exists (submodules with packaging=jar) ---
-  if [[ -f "$JAR_FILE_SOURCE" ]]; then
-    JAR_NAME="${ARTIFACT}-${UPLOAD_VERSION}.jar"
-
-    logInfoMessage "JAR source: $JAR_FILE_SOURCE"
-    logInfoMessage "Generating JAR checksums..."
-    md5sum  "$JAR_FILE_SOURCE" | awk '{print $1}' > "${JAR_FILE_SOURCE}.md5"
-    sha1sum "$JAR_FILE_SOURCE" | awk '{print $1}' > "${JAR_FILE_SOURCE}.sha1"
-
-    upload_file "$JAR_FILE_SOURCE"        "$BASE_URL/${JAR_NAME}"      || return 1
-    upload_file "${JAR_FILE_SOURCE}.md5"  "$BASE_URL/${JAR_NAME}.md5"  || return 1
-    upload_file "${JAR_FILE_SOURCE}.sha1" "$BASE_URL/${JAR_NAME}.sha1" || return 1
-
-    rm -f "${JAR_FILE_SOURCE}.md5" "${JAR_FILE_SOURCE}.sha1"
-  else
-    logInfoMessage "ℹ️  No JAR found at $JAR_FILE_SOURCE — uploading POM only (parent/aggregator module)"
-  fi
-
-  # --- Cleanup POM checksums ---
-  rm -f "${POM_FILE}.md5" "${POM_FILE}.sha1"
-
-  logInfoMessage "✅ Module $MODULE_NAME pushed successfully"
-}
-
-# ==============================
-# 🔹 COLLECT ALL POM FILES
-# ==============================
-FAILED_MODULES=()
-
-# FIX: mindepth 1 so root pom.xml (depth 1) is included
-# Root pom.xml is at $CODEBASE_LOCATION/pom.xml → depth 1
-# Submodule pom.xml files are at depth 2-3
-ALL_POMS=()
-while IFS= read -r f; do ALL_POMS+=("$f"); done < <(
-  find "$CODEBASE_LOCATION" -mindepth 1 -maxdepth 3 -name "pom.xml" | sort
-)
-
-logInfoMessage "Found ${#ALL_POMS[@]} pom.xml files to process"
-
-for POM_FILE in "${ALL_POMS[@]}"; do
-  MODULE_NAME=$(basename "$(dirname "$POM_FILE")")
-  process_module "$POM_FILE" || FAILED_MODULES+=("$MODULE_NAME")
+echo "===== START NEXUS UPLOAD ====="
+# --------------------------------------------------
+for VAR in FERNET_KEY ARTIFACTORY_REPOSITORY REPO_NAME; do
+    if [[ -z "${!VAR:-}" ]]; then
+        echo "ERROR: $VAR is not set"
+        exit 1
+    fi
 done
 
-# ==============================
-# 🔹 FINAL SUMMARY
-# ==============================
-logInfoMessage ""
-logInfoMessage "================================================"
-if [[ ${#FAILED_MODULES[@]} -gt 0 ]]; then
-  logInfoMessage "❌ Failed modules: ${FAILED_MODULES[*]}"
-  saveTaskStatus "1" "$ACTIVITY_SUB_TASK_CODE"
-  exit 1
-else
-  logInfoMessage "🎉 All modules uploaded successfully!"
-  saveTaskStatus "0" "$ACTIVITY_SUB_TASK_CODE"
+# --------------------------------------------------
+# Decrypt credentials and extract Nexus URL
+# --------------------------------------------------
+python3 - <<'PY' > /tmp/nexus_creds
+import os
+import json
+from cryptography.fernet import Fernet
+
+repo = json.loads(os.environ["ARTIFACTORY_REPOSITORY"])["integration_1"]
+fernet = Fernet(os.environ["FERNET_KEY"].encode())
+
+username = fernet.decrypt(
+    repo["ARTIFACTORY_USERNAME"].encode()
+).decode()
+
+password = fernet.decrypt(
+    repo["ARTIFACTORY_PASSWORD"].encode()
+).decode()
+
+# ARTIFACTORY_URL is the Nexus base URL stored inside the integration blob.
+# Fall back to the standalone NEXUS_URL env var if present.
+nexus_url = repo.get("ARTIFACTORY_URL") or os.environ.get("NEXUS_URL", "")
+
+print(username)
+print(password)
+print(nexus_url)
+PY
+
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: Credential decryption failed"
+    exit 1
 fi
+
+NEXUS_USERNAME=$(sed -n '1p' /tmp/nexus_creds)
+NEXUS_PASSWORD=$(sed -n '2p' /tmp/nexus_creds)
+# Use URL from integration blob; fall back to standalone NEXUS_URL env var.
+_url_from_creds=$(sed -n '3p' /tmp/nexus_creds)
+NEXUS_URL="${_url_from_creds:-${NEXUS_URL:-}}"
+
+rm -f /tmp/nexus_creds
+
+if [[ -z "$NEXUS_USERNAME" || -z "$NEXUS_PASSWORD" ]]; then
+    echo "ERROR: Nexus username/password is empty after decryption"
+    exit 1
+fi
+
+if [[ -z "$NEXUS_URL" ]]; then
+    echo "ERROR: Nexus URL could not be determined (not in ARTIFACTORY_URL field or NEXUS_URL env var)"
+    exit 1
+fi
+
+logInfoMessage "Nexus credentials decrypted successfully"
+logInfoMessage "Nexus URL          : $NEXUS_URL"
+logInfoMessage "Repository         : $REPO_NAME"
+
+# --------------------------------------------------
+# Codebase
+# --------------------------------------------------
+CODEBASE="${WORKSPACE}/${CODEBASE_DIR}"
+
+if [[ ! -d "$CODEBASE" ]]; then
+    echo "ERROR: Codebase not found: $CODEBASE"
+    exit 1
+fi
+
+cd "${CODEBASE}" || { logErrorMessage "Failed to change directory to $CODEBASE"; exit 1; }
+
+# --------------------------------------------------
+# Upload function
+# --------------------------------------------------
+upload() {
+    local FILE="$1"
+    local URL="$2"
+    local CURL_STATUS
+    local HTTP_STATUS
+
+    echo "----------------------------------------"
+    echo "Uploading : $(basename "$FILE")"
+    echo "URL       : $URL"
+
+    curl -k -sS \
+        -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
+        --upload-file "$FILE" \
+        -o /tmp/nexus_response \
+        -w "HTTP_STATUS=%{http_code}\n" \
+        "$URL" > /tmp/nexus_curl_meta
+
+    CURL_STATUS=$?
+
+    HTTP_STATUS=$(grep -o 'HTTP_STATUS=[0-9]*' /tmp/nexus_curl_meta | cut -d= -f2)
+
+    echo "Curl exit code : $CURL_STATUS"
+    echo "HTTP status    : ${HTTP_STATUS:-unknown}"
+
+    if [[ -s /tmp/nexus_response ]]; then
+        echo "Nexus response:"
+        cat /tmp/nexus_response
+    fi
+
+    rm -f /tmp/nexus_curl_meta /tmp/nexus_response
+
+    # Fail on transport-level errors (curl itself failed)
+    if [[ $CURL_STATUS -ne 0 ]]; then
+        echo "ERROR: Curl failed (transport error)"
+        return 1
+    fi
+
+    # Fail on non-2xx HTTP responses
+    if [[ -z "$HTTP_STATUS" || "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
+        echo "ERROR: Nexus rejected upload (HTTP $HTTP_STATUS)"
+        return 1
+    fi
+
+    return 0
+}
+
+# --------------------------------------------------
+# Process POM
+# --------------------------------------------------
+process_pom() {
+    local POM="$1"
+    local DIR
+    local ARTIFACT
+    local VERSION
+    local GROUP
+    local BASE
+    local JAR
+
+    DIR=$(dirname "$POM")
+
+    echo ""
+    echo "========================================"
+    echo "Processing: $POM"
+    echo "========================================"
+
+    ARTIFACT=$(xmllint \
+        --xpath "string(/*[local-name()='project']/*[local-name()='artifactId'])" \
+        "$POM" 2>/dev/null)
+
+    VERSION=$(xmllint \
+        --xpath "string(/*[local-name()='project']/*[local-name()='version'])" \
+        "$POM" 2>/dev/null)
+
+    GROUP=$(xmllint \
+        --xpath "string(/*[local-name()='project']/*[local-name()='groupId'])" \
+        "$POM" 2>/dev/null)
+
+    [[ -z "$VERSION" ]] && VERSION=$(xmllint \
+        --xpath "string(/*[local-name()='project']/*[local-name()='parent']/*[local-name()='version'])" \
+        "$POM" 2>/dev/null)
+
+    [[ -z "$GROUP" ]] && GROUP=$(xmllint \
+        --xpath "string(/*[local-name()='project']/*[local-name()='parent']/*[local-name()='groupId'])" \
+        "$POM" 2>/dev/null)
+
+    echo "Group    : $GROUP"
+    echo "Artifact : $ARTIFACT"
+    echo "Version  : $VERSION"
+
+    if [[ -z "$ARTIFACT" || -z "$VERSION" || -z "$GROUP" ]]; then
+        echo "ERROR: Could not read Maven information"
+        return 1
+    fi
+
+    BASE="${NEXUS_URL}/repository/${REPO_NAME}/${GROUP//./\/}/$ARTIFACT/$VERSION"
+
+    echo "Base URL : $BASE"
+
+    # -----------------------------
+    # Upload POM
+    # -----------------------------
+    if ! upload "$POM" "$BASE/$ARTIFACT-$VERSION.pom"; then
+        echo "ERROR: POM upload failed"
+        return 1
+    fi
+
+    echo "POM upload successful"
+
+    # -----------------------------
+    # Upload JAR
+    # -----------------------------
+    JAR="$DIR/target/$ARTIFACT-$VERSION.jar"
+
+    if [[ ! -f "$JAR" ]]; then
+        echo "WARNING: JAR not found: $JAR"
+        echo "Continuing..."
+        return 0
+    fi
+
+    if ! upload "$JAR" "$BASE/$ARTIFACT-$VERSION.jar"; then
+        echo "ERROR: JAR upload failed"
+        return 1
+    fi
+
+    echo "JAR upload successful"
+
+    # -----------------------------
+    # Checksums
+    # -----------------------------
+    echo "Generating checksums..."
+
+    md5sum "$POM"  | awk '{print $1}' > "$POM.md5"
+    sha1sum "$POM" | awk '{print $1}' > "$POM.sha1"
+    md5sum "$JAR"  | awk '{print $1}' > "$JAR.md5"
+    sha1sum "$JAR" | awk '{print $1}' > "$JAR.sha1"
+
+    echo "Uploading checksums..."
+
+    upload "$POM.md5"  "$BASE/$ARTIFACT-$VERSION.pom.md5"  || echo "WARNING: POM MD5 upload failed"
+    upload "$POM.sha1" "$BASE/$ARTIFACT-$VERSION.pom.sha1" || echo "WARNING: POM SHA1 upload failed"
+    upload "$JAR.md5"  "$BASE/$ARTIFACT-$VERSION.jar.md5"  || echo "WARNING: JAR MD5 upload failed"
+    upload "$JAR.sha1" "$BASE/$ARTIFACT-$VERSION.jar.sha1" || echo "WARNING: JAR SHA1 upload failed"
+
+    rm -f "$POM.md5" "$POM.sha1" "$JAR.md5" "$JAR.sha1"
+
+    echo "========================================"
+    echo "SUCCESS: $ARTIFACT:$VERSION"
+    echo "========================================"
+
+    return 0
+}
+
+# --------------------------------------------------
+# Find and process POMs
+# --------------------------------------------------
+FAILED=0
+
+while IFS= read -r POM; do
+
+    process_pom "$POM"
+
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR: Module failed: $POM"
+        FAILED=1
+    fi
+
+done < <(
+    find "$CODEBASE" \
+        -mindepth 1 \
+        -maxdepth 3 \
+        -name "pom.xml" \
+        | sort
+)
+
+# --------------------------------------------------
+# Final result
+# --------------------------------------------------
+echo ""
+echo "========================================"
+
+if [[ $FAILED -eq 0 ]]; then
+    echo "ALL MODULES COMPLETED"
+    echo "========================================"
+    FINAL_STATUS=0
+else
+    echo "ONE OR MORE MODULES FAILED"
+    echo "========================================"
+    FINAL_STATUS=1
+fi
+
+if [[ "${FINAL_STATUS}" -eq 0 ]]; then
+    logInfoMessage "Congratulations ${ACTIVITY_SUB_TASK_CODE} succeeded!!!"
+    _status_bool=true
+else
+    logErrorMessage "Please check ${ACTIVITY_SUB_TASK_CODE} failed!!!"
+    _status_bool=false
+fi
+
+# Write summary.json with a proper boolean status value.
+_exec_dir="/bp/execution_dir"
+_out_dir="${_exec_dir}/${EXECUTION_TASK_ID}"
+_summary="${_out_dir}/summary.json"
+
+mkdir -p "${_out_dir}"
+
+_existing=""
+[[ -f "${_summary}" ]] && _existing=$(<"${_summary}")
+[[ "${_existing}" != "["* ]] && _existing="[${_existing}]"
+
+_msg="Congratulations ${ACTIVITY_SUB_TASK_CODE} succeeded!!!"
+[[ "${FINAL_STATUS}" -ne 0 ]] && _msg="Please check ${ACTIVITY_SUB_TASK_CODE} failed!!!"
+
+_updated=$(jq -c \
+    --arg  key     "${ACTIVITY_SUB_TASK_CODE}" \
+    --argjson status "${_status_bool}" \
+    --arg  message "${_msg}" \
+    '. += [{ ($key): { "status": $status, "message": $message } }]' \
+    <<< "${_existing}")
+
+echo "${_updated}" | jq "." > "${_summary}"
+
+jq -n \
+    --arg  key     "${ACTIVITY_SUB_TASK_CODE}" \
+    --argjson status "${_status_bool}" \
+    --arg  message "${_msg}" \
+    '{ ($key): { "status": $status, "message": $message } }' \
+    > "${_out_dir}/${ACTIVITY_SUB_TASK_CODE}.json"
+
+echo "Job step response updated in: ${_summary}"
+
+exit "${FINAL_STATUS}"
